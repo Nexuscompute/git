@@ -1,3 +1,5 @@
+#define USE_THE_REPOSITORY_VARIABLE
+
 #include "git-compat-util.h"
 #include "diagnose.h"
 #include "compat/disk.h"
@@ -29,7 +31,6 @@ static struct diagnose_option diagnose_options[] = {
 
 int option_parse_diagnose(const struct option *opt, const char *arg, int unset)
 {
-	int i;
 	enum diagnose_mode *diagnose = opt->value;
 
 	if (!arg) {
@@ -37,7 +38,7 @@ int option_parse_diagnose(const struct option *opt, const char *arg, int unset)
 		return 0;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(diagnose_options); i++) {
+	for (size_t i = 0; i < ARRAY_SIZE(diagnose_options); i++) {
 		if (!strcmp(arg, diagnose_options[i].option_name)) {
 			*diagnose = diagnose_options[i].mode;
 			return 0;
@@ -71,42 +72,6 @@ static int dir_file_stats(struct object_directory *object_dir, void *data)
 	return 0;
 }
 
-/*
- * Get the d_type of a dirent. If the d_type is unknown, derive it from
- * stat.st_mode.
- *
- * Note that 'path' is assumed to have a trailing slash. It is also modified
- * in-place during the execution of the function, but is then reverted to its
- * original value before returning.
- */
-static unsigned char get_dtype(struct dirent *e, struct strbuf *path)
-{
-	struct stat st;
-	unsigned char dtype = DTYPE(e);
-	size_t base_path_len;
-
-	if (dtype != DT_UNKNOWN)
-		return dtype;
-
-	/* d_type unknown in dirent, try to fall back on lstat results */
-	base_path_len = path->len;
-	strbuf_addstr(path, e->d_name);
-	if (lstat(path->buf, &st))
-		goto cleanup;
-
-	/* determine d_type from st_mode */
-	if (S_ISREG(st.st_mode))
-		dtype = DT_REG;
-	else if (S_ISDIR(st.st_mode))
-		dtype = DT_DIR;
-	else if (S_ISLNK(st.st_mode))
-		dtype = DT_LNK;
-
-cleanup:
-	strbuf_setlen(path, base_path_len);
-	return dtype;
-}
-
 static int count_files(struct strbuf *path)
 {
 	DIR *dir = opendir(path->buf);
@@ -117,7 +82,7 @@ static int count_files(struct strbuf *path)
 		return 0;
 
 	while ((e = readdir_skip_dot_and_dotdot(dir)) != NULL)
-		if (get_dtype(e, path) == DT_REG)
+		if (get_dtype(e, path, 0) == DT_REG)
 			count++;
 
 	closedir(dir);
@@ -146,7 +111,7 @@ static void loose_objs_stats(struct strbuf *buf, const char *path)
 	base_path_len = count_path.len;
 
 	while ((e = readdir_skip_dot_and_dotdot(dir)) != NULL)
-		if (get_dtype(e, &count_path) == DT_DIR &&
+		if (get_dtype(e, &count_path, 0) == DT_DIR &&
 		    strlen(e->d_name) == 2 &&
 		    !hex_to_bytes(&c, e->d_name, 1)) {
 			strbuf_setlen(&count_path, base_path_len);
@@ -191,7 +156,7 @@ static int add_directory_to_archiver(struct strvec *archiver_args,
 
 		strbuf_add_absolute_path(&abspath, at_root ? "." : path);
 		strbuf_addch(&abspath, '/');
-		dtype = get_dtype(e, &abspath);
+		dtype = get_dtype(e, &abspath, 0);
 
 		strbuf_setlen(&buf, len);
 		strbuf_addstr(&buf, e->d_name);
@@ -220,7 +185,7 @@ int create_diagnostics_archive(struct strbuf *zip_path, enum diagnose_mode mode)
 	char **argv_copy = NULL;
 	int stdout_fd = -1, archiver_fd = -1;
 	struct strbuf buf = STRBUF_INIT;
-	int res, i;
+	int res;
 	struct archive_dir archive_dirs[] = {
 		{ ".git", 0 },
 		{ ".git/hooks", 0 },
@@ -273,7 +238,7 @@ int create_diagnostics_archive(struct strbuf *zip_path, enum diagnose_mode mode)
 
 	/* Only include this if explicitly requested */
 	if (mode == DIAGNOSE_ALL) {
-		for (i = 0; i < ARRAY_SIZE(archive_dirs); i++) {
+		for (size_t i = 0; i < ARRAY_SIZE(archive_dirs); i++) {
 			if (add_directory_to_archiver(&archiver_args,
 						      archive_dirs[i].path,
 						      archive_dirs[i].recursive)) {
